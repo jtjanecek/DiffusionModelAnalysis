@@ -11,14 +11,23 @@ import pandas as pd
 import seaborn as sns
 from collections import defaultdict
 import os
+from copy import deepcopy
 sns.set()
 
 
 WORKDIR = '../workdir_converged/'
+GROUPS = '../data/groups.csv'
+RTS = '../data/rt.csv'
+CONDS = '../data/conds.csv'
 
 
 class DiffusionAnalyzer:
-	def __init__(self, workdir):
+	def __init__(self, workdir, groups, rts, conds):
+
+		self._groups = pd.read_csv(groups, index_col=0, float_precision='round_trip')
+		self._rts = pd.read_csv(rts, index_col=0, float_precision='round_trip')
+		self._conds = pd.read_csv(conds, index_col=0, float_precision='round_trip')
+
 		self._workdir = os.path.abspath(workdir)
 		print("Initializing ...")
 		if not os.path.isdir(workdir):
@@ -52,27 +61,92 @@ class DiffusionAnalyzer:
 			self.__plot_difference_posteriors(chains)
 			self.__plot_group_posteriors(chains)
 			self.__get_deviance(chains)
+			self.__plot_posterior_predictives(chains)
 		except:
 			traceback.print_exc()	
 		finally:
 			chains.close()
+
+	def __plot_posterior_predictives(self, chains):
+		print("Calculating posterior predictives ...")
+		print("Reading ypred ...")
+		y = deepcopy(self._rts.values)
+		conds = deepcopy(self._conds.values)
+		ypred = np.array(chains.get('ypred'))
+
+		n_subj = y.shape[0]
+		n_trials = y.shape[1]
+		n_conds = len(set(conds.flatten()))
+
+		# Calculate ypred_perc_pos.
+		# Each trial will be between 0-1, and will indicate the rate at which 
+		# the answer was towards the positive boundary
+		ypred_perc_pos = np.zeros((n_subj,n_trials))
+		for subj in range(n_subj):
+			for trial in range(n_trials):
+				ypred_perc_pos[subj,trial] = np.count_nonzero(ypred[:,subj,trial,:].flatten() > 0) / ypred[:,subj,trial,:].flatten().shape[0]
+
+		# Fill in the nans from main y
+		ypred_perc_pos[np.isnan(y)] = np.nan
+
+		# We can calculate the accuracy for ypred and for y in each condition
+		# n_subj x n_cond x y/ypred
+		accs = np.full((n_subj,n_conds,2), np.nan)		
+	
+		for cond_idx in range(n_conds):
+			for subj in range(n_subj):
+				# Get the subj-cond acc
+				y_subj_cond = y[subj,:][conds[subj,:] == cond_idx+1]
+				ypred_subj_cond = ypred_perc_pos[subj,:][conds[subj,:] == cond_idx+1]
+				# Remove nans
+				y_subj_cond = y_subj_cond[~np.isnan(y_subj_cond)]
+				ypred_subj_cond = ypred_subj_cond[~np.isnan(ypred_subj_cond)]
+
+				ypred_subj_cond_acc = np.mean(ypred_subj_cond)
+				if cond_idx == 0: # Target, so invert it
+					ypred_subj_cond_acc = 1 - ypred_subj_cond_acc
+					y_subj_cond_acc = np.sum(y_subj_cond<0) / y_subj_cond.shape[0]
+				else:
+					y_subj_cond_acc = np.sum(y_subj_cond>0) / y_subj_cond.shape[0]
+
+				accs[subj,cond_idx,0] = y_subj_cond_acc
+				accs[subj,cond_idx,1] = ypred_subj_cond_acc
+		plt.figure()
+		for i, label in enumerate(['Targ','HSim', 'LSim', 'Foil']):
+			plt.scatter(accs[:,i,0].flatten(), accs[:,i,1].flatten(), label=label, marker='+')
+		plt.plot([0,1], [0,1])
+		plt.xlim([-.05,1.05])
+		plt.ylim([-.05,1.05])
+		plt.title('Posterior Predictive Accuracy')
+		plt.legend()
+		plt.xlabel("Subject Accuracy")
+		plt.ylabel("Modeled Accuracy")
+		plt.savefig("posterior_predictive_acc.png")
+		plt.close()
+
+		'''
+		correct_y = deepcopy(conds)
+		correct_y[correct_y == 1] = -1
+		correct_y[(correct_y == 2) | (correct_y == 3) | (correct_y == 4)] = 1
+		print(conds)
+		print(correct_y)
+		'''
+		
 
 	def __plot_group_posteriors(self, chains):
 		print(f"Plotting group posteriors for model {self.__model} ...")
 
 		def plot_group_post(posterior_data, label):
 			plt.figure()
-			print(posterior_data.shape)
 
 			group1_data = posterior_data[:,0,:].flatten()
 			group2_data = posterior_data[:,1,:].flatten()
-			print(group1_data.shape)
-			print(group2_data.shape)
 
 			# Plot posterior 
 			plt.hist(group1_data, bins=50, density=True, label='Group 1', alpha=.5)
 			plt.hist(group2_data, bins=50, density=True, label='Group 2', alpha=.5)
 	
+			plt.legend()
 			plt.savefig(f'{label}.png')
 			plt.close()
 
@@ -158,7 +232,7 @@ class DiffusionAnalyzer:
 				print(f'{model}: {val}')
 
 if __name__ == '__main__':
-	da = DiffusionAnalyzer(WORKDIR)
+	da = DiffusionAnalyzer(WORKDIR, GROUPS, RTS, CONDS)
 	da.plot()	
 	
 	da.print_stats()
