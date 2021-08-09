@@ -6,19 +6,19 @@ import numpy as np
 import h5py
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-mpl.rcParams['figure.dpi'] = 150
+mpl.rcParams['figure.dpi'] = 500
 import pandas as pd
 import seaborn as sns
 from collections import defaultdict
 import os
 from copy import deepcopy
-sns.set()
-
 
 WORKDIR = '../workdir_converged/'
 GROUPS = '../data/groups.csv'
 RTS = '../data/rt.csv'
 CONDS = '../data/conds.csv'
+
+FILEPATH = os.path.dirname(os.path.abspath(__file__))
 
 
 class DiffusionAnalyzer:
@@ -34,7 +34,8 @@ class DiffusionAnalyzer:
 			raise Exception("Workdir doesn't exist!")
 		os.chdir(workdir)
 		
-		self._models = sorted(os.listdir('.'))
+		self._models = sorted([d for d in os.listdir('.') if d not in ['@eaDir', '.DS_Store']])
+		#self._models = ['model_02']
 		if len(self._models) == 0:
 			raise Exception('No models found.')
 		print(f"Found models: {self._models}")
@@ -61,11 +62,41 @@ class DiffusionAnalyzer:
 			self.__plot_difference_posteriors(chains)
 			self.__plot_group_posteriors(chains)
 			self.__get_deviance(chains)
-			self.__plot_posterior_predictives(chains)
+			#self.__plot_posterior_predictives(chains)
+			self.__plot_subj_reps(chains)
 		except:
 			traceback.print_exc()	
 		finally:
 			chains.close()
+
+	def __plot_subj_reps(self, chains):
+		print("Plotting subj reps ...")
+		old = {}
+		young = {}		
+		for idx, param in enumerate(['Target', 'Lure (HighSim)', 'Lure (LowSim)', 'Foil']):
+			data = np.array(chains.get('deltasubjrep'))
+			d = np.squeeze(data[:,:,idx,:])	
+			old[param] = d[:,0,:].flatten()
+			young[param] = d[:,1,:].flatten()	
+			#self.__stats[self.__model][f'delta_rep_{param}_overlap'] = np.sum(np.array(sorted(old[param])) > np.array(sorted(young[param]))) / old[param].shape[0]
+			self.__stats[self.__model][f'delta_rep_{param}_overlap'] = np.sum(old[param] < young[param]) / old[param].shape[0]
+
+
+			#plot_group_post(d, f'deltagroup_{param}')
+		old_df = pd.DataFrame(old)
+		young_df = pd.DataFrame(young)
+		old_df['Group'] = 'Old'
+		young_df['Group'] = 'Young'
+		df = pd.concat([old_df, young_df])
+		df = pd.melt(df, id_vars=['Group'], value_vars=['Target', 'Lure (HighSim)', 'Lure (LowSim)', 'Foil'], var_name = 'Condition', value_name = 'Drift Rate')	
+
+		plt.figure()
+		sns.violinplot(x='Condition', y='Drift Rate', hue='Group', data=df)
+		plt.title('Subject Representatives')
+		plt.legend(loc='upper left')
+		plt.savefig('drifts_subj.png')
+		plt.close()
+
 
 	def __plot_posterior_predictives(self, chains):
 		print("Calculating posterior predictives ...")
@@ -78,6 +109,7 @@ class DiffusionAnalyzer:
 		n_trials = y.shape[1]
 		n_conds = len(set(conds.flatten()))
 
+		############################### ACC ##############
 		# Calculate ypred_perc_pos.
 		# Each trial will be between 0-1, and will indicate the rate at which 
 		# the answer was towards the positive boundary
@@ -112,7 +144,7 @@ class DiffusionAnalyzer:
 				accs[subj,cond_idx,0] = y_subj_cond_acc
 				accs[subj,cond_idx,1] = ypred_subj_cond_acc
 		plt.figure()
-		for i, label in enumerate(['Targ','HSim', 'LSim', 'Foil']):
+		for i, label in enumerate(['Target','Lure (HighSim)', 'Lure (LowSim)', 'Foil']):
 			plt.scatter(accs[:,i,0].flatten(), accs[:,i,1].flatten(), label=label, marker='+')
 		plt.plot([0,1], [0,1])
 		plt.xlim([-.05,1.05])
@@ -124,14 +156,28 @@ class DiffusionAnalyzer:
 		plt.savefig("posterior_predictive_acc.png")
 		plt.close()
 
-		'''
-		correct_y = deepcopy(conds)
-		correct_y[correct_y == 1] = -1
-		correct_y[(correct_y == 2) | (correct_y == 3) | (correct_y == 4)] = 1
-		print(conds)
-		print(correct_y)
-		'''
+		############################### RT ##############
+		# subj x condition x neg/pos boundary x 3 quantiles
+		# negative_boundary = 0 idx, positive_boundary = 1 idx
+		# quantile .1 = 0 idx, quantile .3 = 1 idx, quantile .9 = 2 idx
+		y_quant = np.full((n_subj, n_conds, 2, 3), np.nan)		
+		ypred_quant = np.full((n_subj, n_conds, 2, 3), np.nan)		
 		
+		print('y:',y.shape)
+		print('ypred:',ypred.shape)
+		return
+		
+		for cond_idx in range(n_conds):	
+			for subj_idx in range(n_subj):
+				y_cond_subj = y[conds == cond_idx+1][subj_idx,:]
+				ypred_cond_subj = ypred[conds == cond_idx+1][subj_idx,:,:]
+				print('y_cond_subj:',y_cond_subj.shape)
+				print('ypred_cond_subj:',ypred_cond_subj.shape)
+				break	
+				for quant_idx, q in enumerate([.1, .5, .9]):
+					pass
+			break
+			
 
 	def __plot_group_posteriors(self, chains):
 		print(f"Plotting group posteriors for model {self.__model} ...")
@@ -142,12 +188,15 @@ class DiffusionAnalyzer:
 			group1_data = posterior_data[:,0,:].flatten()
 			group2_data = posterior_data[:,1,:].flatten()
 
+			self.__stats[self.__model][f'{label}_old_ci'] = '{:.2f} [{:.2f}, {:.2f}    ]'.format(np.mean(group1_data), *self.__calculate_ci(group1_data))
+			self.__stats[self.__model][f'{label}_young_ci'] = '{:.2f} [{:.2f}, {:.2f}    ]'.format(np.mean(group2_data), *self.__calculate_ci(group2_data))
+
 			# Plot posterior 
 			plt.hist(group1_data, bins=50, density=True, label='Group 1', alpha=.5)
 			plt.hist(group2_data, bins=50, density=True, label='Group 2', alpha=.5)
 	
 			plt.legend()
-			plt.savefig(f'{label}.png')
+			#plt.savefig(f'{label}.png')
 			plt.close()
 
 		# Plot main params
@@ -155,11 +204,67 @@ class DiffusionAnalyzer:
 			data = np.array(chains.get(param))
 			plot_group_post(data, param)
 
-		for idx, param in enumerate(['targ', 'hsim', 'lsim', 'foil']):
+		#### VIOLIN PLOT FOR TAU ONLY
+		old = {}
+		young = {}		
+		data = np.array(chains.get('taugroup'))
+		old['Tau'] = data[:,0,:].flatten()
+		young['Tau'] = data[:,1,:].flatten()	
+		old['Tau1'] = data[:,0,:].flatten()
+		young['Tau1'] = data[:,1,:].flatten()	
+		old['Tau2'] = data[:,0,:].flatten()
+		young['Tau2'] = data[:,1,:].flatten()	
+		old['Tau3'] = data[:,0,:].flatten()
+		young['Tau3'] = data[:,1,:].flatten()	
+				
+
+		old_df = pd.DataFrame(old)
+		young_df = pd.DataFrame(young)
+		old_df['Group'] = 'Old'
+		young_df['Group'] = 'Young'
+		df = pd.concat([old_df, young_df])
+		df = pd.melt(df, id_vars=['Group'], value_vars=['Tau', 'Tau1', 'Tau2', 'Tau3'], var_name = 'Condition', value_name = 'Seconds')	
+
+		plt.figure()
+		sns.violinplot(x='Condition', y='Seconds', hue='Group', data=df)
+		plt.xlabel('')
+		plt.ylim([0,2])
+		plt.xlim([-.5,.5])
+		fig = plt.gcf()
+		plt.title('Tau Group Means')
+		#fig.set_size_inches(6.4/3, 4.8)
+		fig.set_size_inches(6.4/4, 4.8)
+		ax = plt.gca()
+		ax.get_legend().remove()
+		plt.savefig('tau_groups.png', bbox_inches='tight')
+		plt.close()
+
+		#### VIOLIN PLOT FOR ALL DELTA GROUPS
+		old = {}
+		young = {}		
+		for idx, param in enumerate(['Target', 'Lure (HighSim)', 'Lure (LowSim)', 'Foil']):
 			data = np.array(chains.get('deltagroup'))
 			d = np.squeeze(data[:,:,idx,:])	
-			plot_group_post(d, f'deltagroup_{param}')
-	
+			old[param] = d[:,0,:].flatten()
+			young[param] = d[:,1,:].flatten()	
+			self.__stats[self.__model][f'delta_{param}_old_ci'] = '{:.2f} [{:.2f}, {:.2f}    ]'.format(np.mean(old[param]), *self.__calculate_ci(old[param]))
+			self.__stats[self.__model][f'delta_{param}_young_ci'] = '{:.2f} [{:.2f}, {:.2f}    ]'.format(np.mean(young[param]), *self.__calculate_ci(young[param]))
+
+
+			
+			#plot_group_post(d, f'deltagroup_{param}')
+		old_df = pd.DataFrame(old)
+		young_df = pd.DataFrame(young)
+		old_df['Group'] = 'Old'
+		young_df['Group'] = 'Young'
+		df = pd.concat([old_df, young_df])
+		df = pd.melt(df, id_vars=['Group'], value_vars=['Target', 'Lure (HighSim)', 'Lure (LowSim)', 'Foil'], var_name = 'Condition', value_name = 'Drift Rate')	
+
+		plt.figure()
+		sns.violinplot(x='Condition', y='Drift Rate', hue='Group', data=df)
+		plt.title('Drift Rate Group Means')
+		plt.savefig('drifts.png')
+		plt.close()
 
 	def __get_deviance(self, chains):
 		data = np.array(chains.get('deviance')).flatten()
@@ -197,7 +302,7 @@ class DiffusionAnalyzer:
 			plt.xlim([cur_xlim[0], cur_xlim[1]])
 			plt.legend()
 			plt.title(label)
-			plt.savefig(f'{label}.png')
+			#plt.savefig(f'{label}.png')
 			plt.close()
 
 			return bf
@@ -231,10 +336,34 @@ class DiffusionAnalyzer:
 				val = self.__stats[model][key]
 				print(f'{model}: {val}')
 
+	def save_stats(self):
+		os.chdir(FILEPATH)
+		df = pd.DataFrame(self.__stats)
+		print(f"Saving stats to {os.getcwd()} ...")
+		df.to_csv('stats.csv')
+
+	def __calculate_ci(self, datapoints, alpha=.95):
+		mean = np.mean(datapoints)
+		total_points = datapoints
+
+		data_greater = sorted(datapoints[datapoints > mean])
+		data_less = sorted(datapoints[datapoints < mean], reverse=True)
+		curr_d = int(len(datapoints) * alpha)
+		cur_greater = int(curr_d/2)
+		cur_less = int(curr_d/2)
+		if int(curr_d/2) > len(data_greater):
+			cur_greater = len(data_greater) - 1
+			cur_less += int(curr_d/2) - len(data_greater)
+		if int(curr_d/2) > len(data_less):
+			cur_less = len(data_less) - 1
+			cur_greater += int(curr_d/2) - len(data_less)
+		return data_less[cur_less], data_greater[cur_greater]
+
 if __name__ == '__main__':
 	da = DiffusionAnalyzer(WORKDIR, GROUPS, RTS, CONDS)
 	da.plot()	
 	
 	da.print_stats()
+	da.save_stats()
 
 
