@@ -35,7 +35,7 @@ class DiffusionAnalyzer:
 		os.chdir(workdir)
 		
 		self._models = sorted([d for d in os.listdir('.') if d not in ['@eaDir', '.DS_Store']])
-		#self._models = ['model_02']
+		self._models = ['model_02']
 		if len(self._models) == 0:
 			raise Exception('No models found.')
 		print(f"Found models: {self._models}")
@@ -62,7 +62,7 @@ class DiffusionAnalyzer:
 			self.__plot_difference_posteriors(chains)
 			self.__plot_group_posteriors(chains)
 			self.__get_deviance(chains)
-			#self.__plot_posterior_predictives(chains)
+			self.__plot_posterior_predictives(chains)
 			self.__plot_subj_reps(chains)
 		except:
 			traceback.print_exc()	
@@ -70,7 +70,7 @@ class DiffusionAnalyzer:
 			chains.close()
 
 	def __plot_subj_reps(self, chains):
-		print("Plotting subj reps ...")
+		print(" Plotting subj reps ...")
 		old = {}
 		young = {}		
 		for idx, param in enumerate(['Target', 'Lure (HighSim)', 'Lure (LowSim)', 'Foil']):
@@ -99,8 +99,8 @@ class DiffusionAnalyzer:
 
 
 	def __plot_posterior_predictives(self, chains):
-		print("Calculating posterior predictives ...")
-		print("Reading ypred ...")
+		print(" Calculating posterior predictives ...")
+		print(" Reading ypred ...")
 		y = deepcopy(self._rts.values)
 		conds = deepcopy(self._conds.values)
 		ypred = np.array(chains.get('ypred'))
@@ -109,6 +109,7 @@ class DiffusionAnalyzer:
 		n_trials = y.shape[1]
 		n_conds = len(set(conds.flatten()))
 
+		print(" Plotting ypred acc ...")
 		############################### ACC ##############
 		# Calculate ypred_perc_pos.
 		# Each trial will be between 0-1, and will indicate the rate at which 
@@ -156,31 +157,49 @@ class DiffusionAnalyzer:
 		plt.savefig("posterior_predictive_acc.png")
 		plt.close()
 
+		print(" Creating quantiles ...")
 		############################### RT ##############
 		# subj x condition x neg/pos boundary x 3 quantiles
 		# negative_boundary = 0 idx, positive_boundary = 1 idx
 		# quantile .1 = 0 idx, quantile .3 = 1 idx, quantile .9 = 2 idx
 		y_quant = np.full((n_subj, n_conds, 2, 3), np.nan)		
 		ypred_quant = np.full((n_subj, n_conds, 2, 3), np.nan)		
-		
+
 		print('y:',y.shape)
 		print('ypred:',ypred.shape)
-		return
+		# ypred: nchain x subj x trial x samples
 		
 		for cond_idx in range(n_conds):	
 			for subj_idx in range(n_subj):
-				y_cond_subj = y[conds == cond_idx+1][subj_idx,:]
-				ypred_cond_subj = ypred[conds == cond_idx+1][subj_idx,:,:]
-				print('y_cond_subj:',y_cond_subj.shape)
-				print('ypred_cond_subj:',ypred_cond_subj.shape)
-				break	
-				for quant_idx, q in enumerate([.1, .5, .9]):
-					pass
-			break
+				# Get the condition labels for this subject condition combo
+				s_conds = conds[subj_idx,:]
+				print(s_conds.shape)
+				# Get the subject y values
+				y_subj = y[subj_idx,:].flatten()
+				print(y_subj.shape)
+				# Get the ypred values for this subj
+				ypred_subj = np.squeeze(ypred[:,subj,:,:])
+				print(ypred_subj.shape)
+			
+				# Filter by this specific condition
+				y_subj_cond = y_subj[s_conds==cond_idx+1]
+				ypred_subj_cond = ypred_subj[:,s_conds==cond_idx+1,:]
+
+				print('y_subj_cond:',y_subj_cond.shape)
+				print('ypred_subj_cond:',ypred_subj_cond.shape)
+
+				for neg_pos_idx, boundary_condition in enumerate([y_subj_cond > 0, y_subj_cond < 0]):
+					y_boundary = np.abs(y_subj_cond[boundary_condition].flatten())
+					ypred_boundary = np.abs(ypred_subj_cond[:,boundary_condition,:].flatten())
+					if len(y_boundary) < 10:
+						continue
+					for quant_idx, q in enumerate([.1, .5, .9]):
+						y_quant[subj_idx,cond_idx,neg_pos_idx,quant_idx] = np.quantile(y_boundary,q)
+						ypred_quant[subj_idx,cond_idx,neg_pos_idx,quant_idx] = np.quantile(ypred_boundary,q)	
 			
 
 	def __plot_group_posteriors(self, chains):
-		print(f"Plotting group posteriors for model {self.__model} ...")
+		print(f" Plotting group posteriors for model {self.__model} ...")
 
 		def plot_group_post(posterior_data, label):
 			plt.figure()
@@ -271,7 +290,7 @@ class DiffusionAnalyzer:
 		self.__stats[self.__model]['dic'] = np.mean(data)
 
 	def __plot_difference_posteriors(self, chains):
-		print(f"Plotting posterior differences for model {self.__model} ...")
+		print(f" Plotting posterior differences for model {self.__model} ...")
 
 		def plot_diff(posterior_data, label, prior_mu, prior_sd):
 			# Get posterior mu/sd 
@@ -363,7 +382,7 @@ if __name__ == '__main__':
 	da = DiffusionAnalyzer(WORKDIR, GROUPS, RTS, CONDS)
 	da.plot()	
 	
-	da.print_stats()
+	#da.print_stats()
 	da.save_stats()
 
 
