@@ -35,7 +35,7 @@ class DiffusionAnalyzer:
 		os.chdir(workdir)
 		
 		self._models = sorted([d for d in os.listdir('.') if d not in ['@eaDir', '.DS_Store']])
-		self._models = ['model_02']
+		#self._models = ['model_02']
 		if len(self._models) == 0:
 			raise Exception('No models found.')
 		print(f"Found models: {self._models}")
@@ -103,8 +103,10 @@ class DiffusionAnalyzer:
 		print(" Reading ypred ...")
 		y = deepcopy(self._rts.values)
 		conds = deepcopy(self._conds.values)
+		groups = deepcopy(self._groups.values)
 		ypred = np.array(chains.get('ypred'))
 
+		n_groups = len(set(groups.flatten()))
 		n_subj = y.shape[0]
 		n_trials = y.shape[1]
 		n_conds = len(set(conds.flatten()))
@@ -165,28 +167,20 @@ class DiffusionAnalyzer:
 		y_quant = np.full((n_subj, n_conds, 2, 3), np.nan)		
 		ypred_quant = np.full((n_subj, n_conds, 2, 3), np.nan)		
 
-		print('y:',y.shape)
-		print('ypred:',ypred.shape)
 		# ypred: nchain x subj x trial x samples
 		
 		for cond_idx in range(n_conds):	
 			for subj_idx in range(n_subj):
 				# Get the condition labels for this subject condition combo
 				s_conds = conds[subj_idx,:]
-				print(s_conds.shape)
 				# Get the subject y values
 				y_subj = y[subj_idx,:].flatten()
-				print(y_subj.shape)
 				# Get the ypred values for this subj
 				ypred_subj = np.squeeze(ypred[:,subj,:,:])
-				print(ypred_subj.shape)
 			
 				# Filter by this specific condition
 				y_subj_cond = y_subj[s_conds==cond_idx+1]
 				ypred_subj_cond = ypred_subj[:,s_conds==cond_idx+1,:]
-
-				print('y_subj_cond:',y_subj_cond.shape)
-				print('ypred_subj_cond:',ypred_subj_cond.shape)
 
 				for neg_pos_idx, boundary_condition in enumerate([y_subj_cond > 0, y_subj_cond < 0]):
 					y_boundary = np.abs(y_subj_cond[boundary_condition].flatten())
@@ -196,6 +190,22 @@ class DiffusionAnalyzer:
 					for quant_idx, q in enumerate([.1, .5, .9]):
 						y_quant[subj_idx,cond_idx,neg_pos_idx,quant_idx] = np.quantile(y_boundary,q)
 						ypred_quant[subj_idx,cond_idx,neg_pos_idx,quant_idx] = np.quantile(ypred_boundary,q)	
+		for group_idx, label in enumerate(['Old', 'Young']):	
+			fig, (ax0, ax1, ax2) = plt.subplots(1,3, sharey=True, figsize=(20,5))		
+			fig.suptitle(label)
+			ax0.plot([-50,50],[-50,50])
+			ax1.plot([-50,50],[-50,50])
+			ax2.plot([-50,50],[-50,50])
+			ax0.set_title(".1 Quantile")
+			ax1.set_title(".5 Quantile")
+			ax2.set_title(".9 Quantile")
+			for q_idx, ax in enumerate([ax0,ax1,ax2]):
+				
+				pass
+
+			plt.savefig(f'{label}_quantiles.png')
+			plt.close()
+
 			
 
 	def __plot_group_posteriors(self, chains):
@@ -382,7 +392,7 @@ if __name__ == '__main__':
 	da = DiffusionAnalyzer(WORKDIR, GROUPS, RTS, CONDS)
 	da.plot()	
 	
-	#da.print_stats()
+	da.print_stats()
 	da.save_stats()
 
 
